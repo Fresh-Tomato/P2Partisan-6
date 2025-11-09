@@ -150,10 +150,10 @@ rx8E4BME3aM6CMMxazMOiP5vUXUJGvobY2HylVoIAAA=
 ENDF
 }
 chmod 777 /tmp/deaggregate.sh
-[ -f $P2Partisandir/blacklist-custom ] || wget -q -O - https://pastebin.com/raw/2xkwzR1A | tr -d "\r" > $P2Partisandir/blacklist-custom
-[ -f $P2Partisandir/blacklists ] || wget -q -O - https://pastebin.com/raw/ARx7NAYz | tr -d "\r" > $P2Partisandir/blacklists
-[ -f $P2Partisandir/greylist ] || wget -q -O - https://pastebin.com/raw/Q9NrpXYu | tr -d "\r" > $P2Partisandir/greylist
-[ -f $P2Partisandir/whitelist ] || wget -q -O - https://pastebin.com/raw/eb0V3YLp | tr -d "\r" > $P2Partisandir/whitelist
+[ -f $P2Partisandir/blacklist-custom ] || wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/blacklist-custom | tr -d "\r" > $P2Partisandir/blacklist-custom
+[ -f $P2Partisandir/blacklists ] || wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/blacklists | tr -d "\r" > $P2Partisandir/blacklists
+[ -f $P2Partisandir/greylist ] || wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/greylist | tr -d "\r" > $P2Partisandir/greylist
+[ -f $P2Partisandir/whitelist ] || wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/whitelist | tr -d "\r" > $P2Partisandir/whitelist
 }
 
  
@@ -1864,3 +1864,4 @@ pstart
 
 
 exit
+
