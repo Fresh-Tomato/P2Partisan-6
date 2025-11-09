@@ -1,0 +1,31 @@
++ = done
+- = might or might not happen
+-----------------------------------------------------------------------------------------------------------
++ async list loading (done 6.x)
+ + handle all the possible exceptions e.g. process stopped for unforeseen reason, manual mistake (CTRL+C), 
+ + modify status page to reflect list status
+ + modify status page to display the correct statup time (from first list to last one fully loaded). Or loading time on a list basis...
+ - handle wget failure
+ + tutor to re-attempts failed lists
+ + maximum number of async loads at any given time
+ + attempt a list.mirror + swap approach to update lists when P2Partisan is already running
+ + add "update listname" to update individual lists manually
+- improve detective function (currently beta) e.g. to spot greyports based on multiple criteria
+- create whitelists routine to input data into ipset from public lists (where to be placed in the iptables?)
++ allow subnet (x.x.x.x/M) format into blacklist-custom and whitelist
+ + 6.x - convert ranges into subnets (blacklist-custom and whitelist only) using Jerm routine
++ 6.x - modify the ipset -A procedure to understand cidr format (e.g. lists already in cidr format)
+ + hashsize and maxelement issue to be addressed (static RAM allocation??)
+- webpage to verify status
+ - webpage to allow config modification e.g. add lists
+- display changelog as part of the upgrade procedure
++ call custom script after p2Partisan is fully loaded (punch hole idea to modify default behaviour bird333 enquiry)?
+- Make pwhitelist and pblacklistcustom convert using the external deaggregate (good idea?) 
++ Report on the status page the list as loading (pid file per list?)
+ + spot ipsets created but empty (report as error)
++ Report on the status page the list memory usage
+- Jerm idea not to download if the file is the latest?
+ - deaggregate output to file to quick startup -> problem experienced (too slow)
+ - remove duplicates when creating the file
+- add whitelists (switch to single whitelist and blacklist file?
+- load whitelist or (alias for backward compatibility) whitelist-custom (ln -s? or make whitelist-custom loaded only if whitelist doesn't exists?)
