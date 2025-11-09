@@ -1,0 +1,35 @@
+###########################################################################
+# Generic lists, additional available e.g. at the following providers:
+# https://www.iblocklist.com/lists.php
+# http://iplists.firehol.org/
+# https://www.spamhaus.org/drop/
+###########################################################################
+# The 2 formats supported are:
+# Type A:
+# .gz cointaining ASCII in the format "description:SIP-DIP"
+# Type B:
+# ASCII cointainting X.X.X.X or X.X.X.X/YY, any optional trailer define by a 
+# semicolon e.g. ";description" is ignored
+#
+# NOTE: enable with caution, with too many lists you might run of RAM on your router!
+#
+level1 http://list.iblocklist.com/?list=bt_level1&fileformat=p2p&archiveformat=gz
+#level2 http://list.iblocklist.com/?list=bt_level2&fileformat=p2p&archiveformat=gz
+#level3 http://list.iblocklist.com/?list=bt_level3&fileformat=p2p&archiveformat=gz
+#edu http://list.iblocklist.com/?list=bt_edu&fileformat=p2p&archiveformat=gz
+#spywere http://list.iblocklist.com/?list=bt_spyware&fileformat=p2p&archiveformat=gz
+#advertisement http://list.iblocklist.com/?list=bt_ads&fileformat=p2p&archiveformat=gz
+#bogon http://list.iblocklist.com/?list=gihxqmhyunbxhbmgqrla&fileformat=p2p&archiveformat=gz
+#hijacked http://list.iblocklist.com/?list=usrcshglbiilevmyfhse&fileformat=p2p&archiveformat=gz
+#dshields http://list.iblocklist.com/?list=xpbqleszmajjesnzddhv&fileformat=p2p&archiveformat=gz
+#primary-threats http://list.iblocklist.com/?list=ijfqtofzixtwayqovmxn&fileformat=p2p&archiveformat=gz
+#rangetest http://list.iblocklist.com/?list=plkehquoahljmyxjixpu&fileformat=p2p&archiveformat=gz
+#badpeers http://list.iblocklist.com/?list=cwworuawihqvocglcoss&fileformat=p2p&archiveformat=gz
+#spider http://list.iblocklist.com/?list=mcvxsnihddgutbjfbghy&fileformat=p2p&archiveformat=gz
+#webexploit http://list.iblocklist.com/?list=ghlzqtqxnzctvvajwwag&fileformat=p2p&archiveformat=gz
+
+# Country lists available here
+# http://www.iblocklist.com/lists.php?category=country
+# Browse the URL above and pick up the list you want to block (if any)
+# e.g. Aruba
+#aruba http://list.iblocklist.com/?list=aw&fileformat=p2p&archiveformat=gz
