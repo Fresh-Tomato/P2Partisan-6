@@ -1,0 +1,15 @@
+######################################
+# IP Whitelist, mix and match any of the following formats 
+# Single: "X.X.X.X"
+# Range: "FIRSTIP-LASTIP"
+# FQDN: "bbc.com"
+# CIDR: "X.X.X.X/YY"
+# Public whitelist: "name http://URL/file.gz"
+# NOTE: BOTH PRIVATE & PUBLIC IP ADDRESSES WILL BE CONSIDERED HERE
+######################################
+
+# BBC
+# bbc.com
+
+# Konami
+# 210.148.52.96
