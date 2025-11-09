@@ -1,0 +1,8 @@
+######################################
+# Custom blacklist, mix and match any of the following formats 
+# Single: "X.X.X.X"
+# Range: "FIRSTIP-LASTIP"
+# FQDN: "bbc.com"
+# CIDR: "X.X.X.X/YY"
+# NOTE: ONLY PUBLIC IP ADDRESSES WILL BE CONSIDERED HERE
+######################################
