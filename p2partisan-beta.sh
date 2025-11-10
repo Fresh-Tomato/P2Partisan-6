@@ -805,9 +805,9 @@ pdetective() {
 
 pupgrade() {
 	[ -f p2partisan_new.sh ] && rm -f "p2partisan_new.sh" 2> /dev/null
-	wget -q -O - http://pastebin.com/raw.php?i=mUeS6jP2 | grep "[p]2partisan v" > ./latest
+	wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan.sh | grep "[p]2partisan v[0-9]" > ./latest
 	latest=$(cut -c3-31 < ./latest)
-	current=$(grep "p2partisan v" ./p2partisan.sh | head -1 | cut -c3-32)
+	current=$(grep "[p]2partisan v[0-9]" ./p2partisan.sh | head -1 | cut -c3-32)
 	if [ "$latest" = "$current" ]; then
 		echo -e "\033[0;40m
 +------------------------- P2Partisan --------------------------+
@@ -841,7 +841,7 @@ You're already running the latest version of P2Partisan
 | y/n"
 		read answer
 	if [ "$answer" = "y" ]; then
-wget -q -O ./p2partisan_new.sh http://pastebin.com/raw.php?i=mUeS6jP2
+wget -q -O ./p2partisan_new.sh https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan.sh
 pupgraderoutine
 				else
 				echo -e "| Upgrade skipped. Quitting...
@@ -854,13 +854,13 @@ pupgraderoutine
 
 pupgradebeta() {
 		[ -f p2partisan_new.sh ] && rm -f "p2partisan_new.sh" 2> /dev/null
-		wget -q -O - http://pastebin.com/raw.php?i=Lt1axJ9a | grep "[p]2partisan v" > ./latest
+		wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan-beta.sh | grep "[p]2partisan v[0-9]" > ./latest
 		echo "| Do you want to install the latest testing beta (not suggested)?
 |
 | y/n"
 		read answer
 				if [ "$answer" = "y" ]; then
-wget -q -O ./p2partisan_new.sh http://pastebin.com/raw.php?i=Lt1axJ9a
+wget -q -O ./p2partisan_new.sh https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan-beta.sh 
 pupgraderoutine
 				else
 				echo -e "| Beta upgrade skipped. Quitting...
