@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# p2partisan v6.16 (19/02/2020)
+# p2partisan v6.17 (10/11/2025)
 #
 # Official page - http://www.linksysinfo.org/index.php?posts/235301/
 #
