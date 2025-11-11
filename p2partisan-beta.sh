@@ -1,10 +1,16 @@
 #!/bin/sh
 export PATH=/bin:/usr/bin:/sbin:/usr/sbin:/home/root
-# p2partisan v6.40 (10/11/2025)
+# p2partisan v6.41 (11/11/2025)
 # Official page - http://www.linksysinfo.org/index.php?posts/235301/
-# <CONFIGURATION> ###########################################
-# Adjust location where the files are kept
-P2Partisandir=/mnt/USB/p2partisan
+# <CONFIGURATION>
+P2Partisandir=
+# set P2Partisandir to script directory if not already defined
+if [ -z "${P2Partisandir}" ]; then
+	case "$0" in
+		/*) P2Partisandir=$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd) ;;
+		*)   cmd=$(command -v "$0" 2>/dev/null) && [ -n "$cmd" ] && P2Partisandir=$(cd "$(dirname "$cmd")" >/dev/null 2>&1 && pwd) || P2Partisandir=$(pwd) ;;
+	esac
+fi
 #
 # Enable logging? Use only for troubleshooting. 0=off 1=on
 syslogs=1
@@ -22,14 +28,14 @@ maxloghour=1
 # e.g. SMTP/HTTP/IMAP/else. Separate value in the list below
 # with commas - NOTE: It is suggested to leave the following ports
 # always on as a minimum:
-# tcp:43,80,443
+# tcp:80,443
 # udp:53,123,1194:1196
 # you might want to append remote admin and VPN ports, and
 # anything else you think it's relevant.
 # Standard iptables syntax, individual ports divided by "," and ":" to
 # define a range e.g. 80,443,2100:2130. Do not whitelist you P2P client!
 whiteports_tcp=80,443,3658,8080,554
-whiteports_udp=53,123,655,1194:1197,1723,3658,554
+whiteports_udp=53,123,655,1194:1196,1723,3658,554
 #
 # Greyports are port/s you absolutely want to filter against lists.
 # Think of an Internet host that has its P2P client set on port 53 UDP.
@@ -52,10 +58,11 @@ greyports_udp=
 greyline=100
 #
 # Schedule defines the allowed hours when P2Partisan tutor can update lists
-# Use the syntax from 0 to 23. e.g. 1,6 allows updates from 1 to 6 am
+# Use the syntax from 0 to 23. e.g. 1,6 allows updates from 1am to 6am
 scheduleupdates="1,6"
 #
-# Defines how many lists can be loaded concurrently at any given time. Default 2
+# Defines how many lists can be loaded concurrently at any given time.
+# This is essentially the number of CPU cores on your device unless you overwite it
 maxconcurrentlistload=$(ls -d /sys/devices/system/cpu/cpu* | wc -l)
 #
 # Enable check on script availability to help autorun.
@@ -99,7 +106,7 @@ sed() { /bin/sed "$@"; }
 iptables() { /usr/sbin/iptables "$@"; }
 service() { /sbin/service "$@"; }
 killall() { /usr/bin/killall "$@"; }
-plog() { logger -t "| P2PARTISAN" -s "$@"; }
+plog() { logger -t "│ P2PARTISAN" -s "$@"; }
 deaggregate() { /bin/nice -n10 /tmp/deaggregate.sh "$@"; }
 service ntpc restart >/dev/null
 now=$(date +%s)
@@ -129,20 +136,51 @@ format_ports() {
 add_ip_to_set() {
 	IP="$1"
 	setname="$2"
-	q=100
-
-	echo "$IP" | grep -E "(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])" >/dev/null 2>&1 && q=1
-	echo "$IP" | grep -Eo "^([2][5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9]-.*)" >/dev/null 2>&1 && q=0
-	echo "$IP" | grep -Eo "^([2][5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9])$" >/dev/null 2>&1 && q=2
-	echo "$IP" | grep -Eo "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$" >/dev/null 2>&1 && q=3
-	echo "$IP" | awk '{print $2}' | grep -E '^(http)' >/dev/null 2>&1 && q=4
+	
+	validate_ip "$IP"
+	q=$?
 
 	case $q in
-		0) echo $IP | pdeaggregate | while read cidr; do ipset -A $setname $cidr 2>/dev/null; done ;;
+		0) echo $IP | pdeaggregate | while read cidr; do ipset -A "$setname" "$cidr" 2>/dev/null; done ;;
 		1) nslookup $IP | grep "Address [0-9]*:" | grep -v 127.0.0.1 | grep -v "\:\:" | grep -Eo "([0-9\.]{7,15})" | while read IPO; do ipset -A $setname ${IPO%*/32} 2>/dev/null; done ;;
 		2) ipset -A $setname ${IP%*/32} 2>/dev/null ;;
 		3) ipset -A $setname $IP 2>/dev/null ;;
 	esac
+}
+
+# Validate IP address (returns: 0=IP range, 1=hostname, 2=IP, 3=CIDR, 4=URL, 100=invalid)
+validate_ip() {
+	IP="$1"
+	q=100
+	#Old domain regex: grep -E "(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])" >/dev/null 2>&1 && q=1
+	echo "$IP" | grep -E '((([a-zA-Z]{1,2})|([0-9]{1,2})|([a-zA-Z0-9]{1,2})|([a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]))\.)+[a-zA-Z]{2,6}' >/dev/null 2>&1 && q=1
+	echo "$IP" | grep -Eo "^([2][5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9]-.*)" >/dev/null 2>&1 && q=0
+	echo "$IP" | grep -Eo "^([2][5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9])$" >/dev/null 2>&1 && q=2
+	echo "$IP" | grep -Eo "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$" >/dev/null 2>&1 && q=3
+	echo "$IP" | awk '{print $2}' | grep -E '^(http)' >/dev/null 2>&1 && q=4
+	return $q
+}
+
+# Check if debug is active in iptables (caches result to avoid repeated iptables calls)
+# Usage: get_debug_status [force_refresh]
+_debug_cache=""
+_debug_cache_time=0
+get_debug_status() {
+	current_time=$(date +%s)
+	# Cache for 2 seconds to avoid repeated iptables calls in same operation
+	if [ -z "$1" ] && [ -n "$_debug_cache" ] && [ $((current_time - _debug_cache_time)) -lt 2 ]; then
+		echo "$_debug_cache"
+		return
+	fi
+	_debug_cache=$(iptables -L P2PARTISAN-DROP-IN 2>/dev/null | awk '/DEBUG/ {count++} END {print count+0}')
+	_debug_cache_time=$current_time
+	echo "$_debug_cache"
+}
+
+# Get file age in seconds (returns 0 if file doesn't exist)
+# Usage: get_file_age "filename"
+get_file_age() {
+	[ -e "$1" ] && echo $(( $(date +%s) - $(date -r "$1" +%s) )) || echo 0
 }
 
 # Get ipset/iptables status - consolidates repeated status checks
@@ -222,15 +260,15 @@ chmod 777 /tmp/deaggregate.sh
 psoftstop() {
 	[ -f /tmp/p2partisan.loading ] && echo "P2Partisan is still loading. Can't stop right now Exiting..." && exit
 	echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|                   _______ __
-|                  |     __|  |_.-----.-----.
-|                  |__     |   _|  _  |  _  |
-|            Soft  |_______|____|_____|   __|
-|                                     |__|
-|
-+---------------------------------------------------------------+"
-	echo -e "| Stopping P2Partisan..."
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                   _______ __
+│                  |     __|  |_.-----.-----.
+│                  |__     |   _|  _  |  _  |
+│            Soft  |_______|____|_____|   __|
+│                                     |__|
+│
+└───────────────────────────────────────────────────────────────┘"
+	echo -e "│ Stopping P2Partisan..."
 	./iptables-del 2> /dev/null
 	plog "Stopping P2Partisan..."
 	[ -f $pidfile ] && rm -f "$pidfile" 2> /dev/null
@@ -245,25 +283,25 @@ pforcestop() {
 		if [ $1 != fix ]; then
 			name=$1
 			echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|  _____   __         __                         __         __
-| |     |_|__|.-----.|  |_ ______.--.--.-----.--|  |.---.-.|  |_.-----.
-| |       |  ||__ --||   _|______|  |  |  _  |  _  ||  _  ||   _|  -__|
-| |_______|__||_____||____|      |_____|   __|_____||___._||____|_____|
-|                                     |__|
-|
-+---------------------------------------------------------------+
-|            background updating list: ${f_light_magenta}$1${b_black}
-+---------------------------------------------------------------+${reset}"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│  _____   __         __                         __         __
+│ |     |_|__|.-----.|  |_ ______.--.--.-----.--|  |.---.-.|  |_.-----.
+│ |       |  ||__ --||   _|______|  |  |  _  |  _  ||  _  ||   _|  -__|
+│ |_______|__||_____||____|      |_____|   __|_____||___._||____|_____|
+│                                     |__|
+│
+├───────────────────────────────────────────────────────────────┤
+│            background updating list: ${f_light_magenta}$1${b_black}
+├───────────────────────────────────────────────────────────────┤${reset}"
 		cat blacklists | grep -Ev "^$" | tr -d "\r" | grep -E "^#( .*|)$name http*." > /dev/null 2>&1 && {
 		echo -e "${b_black}| Warning: ${f_light_yellow}the list reference exists but is currently disabled in the blacklists${b_black}
-+---------------------------------------------------------------+${reset}"
+├───────────────────────────────────────────────────────────────┤${reset}"
 		exit
 		}  2> /dev/null
 		{ 
 			cat blacklists | grep -Ev "#|^$" | tr -d "\r" | grep $name > /dev/null 2>&1 || {
 			echo -e "${b_black}| Error: ${f_light_red}it appears like the list $name is not a valid reference.${b_black} Typo?
-+---------------------------------------------------------------+${reset}"
+├───────────────────────────────────────────────────────────────┤${reset}"
 			exit
 			} 2> /dev/null
 			}
@@ -271,7 +309,7 @@ pforcestop() {
 	url=$(cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | grep $name | awk '{print $2}')
 
 		if [ -n "$url" ]; then
-			ps | grep -E ".*deaggregate.sh $name"| grep -v grep | cut -c1-6 | while read line; do kill $line 2> /dev/null; done
+			ps | grep "[d]eaggregate.sh.*$name" | cut -c1-6 | while read line; do kill $line 2> /dev/null; done
 			rm "/tmp/p2partisan.$name.LOAD" 2> /dev/null
 			if [ "$(ipset --swap "$name.bro" "$name.bro" 2>&1 | grep 'does not exist')" != "" ]
 				then
@@ -318,8 +356,8 @@ pforcestop() {
 				} 2> /dev/null
 			fi
 		else
-		echo -e "|                    ${f_light_red}Error: list not found${b_black}
-+---------------------------------------------------------------+${reset}"
+		echo -e "│                    ${f_light_red}Error: list not found${b_black}
+└────────────────────────────────────────────────────────────────${reset}"
 		fi
 		exit
 		elif [ $1 == "fix" ]; then
@@ -327,14 +365,14 @@ pforcestop() {
 		fi
 	fi
 	echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|                   _______ __
-|                  |     __|  |_.-----.-----.
-|                  |__     |   _|  _  |  _  |
-|            Hard  |_______|____|_____|   __|
-|                                     |__|
-|
-+---------------------------------------------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                   _______ __
+│                  |     __|  |_.-----.-----.
+│                  |__     |   _|  _  |  _  |
+│            Hard  |_______|____|_____|   __|
+│                                     |__|
+│
+└────────────────────────────────────────────────────────────────"
 	{
 		counter=0
 		killall "deaggregate.sh"
@@ -379,7 +417,7 @@ pforcestop() {
 				counter=$(expr $counter + 1)
 				counter=$(printf "%02d" $counter)
 				name=$(echo $line | awk '{print $1}')
-				echo -e "| Removing Blacklist_$counter --> ${f_light_white}***$name***${reset}"
+				echo -e "│ Removing Blacklist_$counter --> ${f_light_white}***$name***${reset}"
 				[ -f ./$name.gz ] && rm -f ./$name.gz
 			done
 		)
@@ -387,7 +425,7 @@ pforcestop() {
 	} > /dev/null 2>&1
 	ptutorunset
 	plog " P2Partisan stopped."
-	echo -e "+---------------------------------------------------------------+${reset}"
+	echo -e "└────────────────────────────────────────────────────────────────${reset}"
 }
 
 pstatus() {
@@ -395,25 +433,25 @@ pstatus() {
 		name=$1
 		echo -e "${b_black}
 
-+------------------------- P2Partisan --------------------------+
-|  _____   __         __          _______ __          __
-| |     |_|__|.-----.|  |_ ______|     __|  |_.---.-.|  |_.--.--.-----.
-| |       |  ||__ --||   _|______|__     |   _|  _  ||   _|  |  |__ --|
-| |_______|__||_____||____|      |_______|____|___._||____|_____|_____|
-|
-+---------------------------------------------------------------+
-|                    list name: ${f_light_yellow}$1${reset}
-+---------------------------------------------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│  _____   __         __          _______ __          __
+│ |     |_|__|.-----.|  |_ ______|     __|  |_.---.-.|  |_.--.--.-----.
+│ |       |  ||__ --||   _|______|__     |   _|  _  ||   _|  |  |__ --|
+│ |_______|__||_____||____|      |_______|____|___._||____|_____|_____|
+│
+├───────────────────────────────────────────────────────────────┤
+│                    list name: ${f_light_yellow}$1${reset}
+├───────────────────────────────────────────────────────────────┤"
 
 	cat blacklists | grep -Ev "^$" | tr -d "\r" | grep -E "^#( .*|)$name http*." > /dev/null 2>&1 && {
-	echo -e "| Warning: ${f_light_yellow}the list reference exists but is currently disabled in the blacklists${b_black}
-+---------------------------------------------------------------+"
+	echo -e "│ Warning: ${f_light_yellow}the list reference exists but is currently disabled in the blacklists${b_black}
+├───────────────────────────────────────────────────────────────┤"
 	exit
 	}  2> /dev/null
 	{
 	cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | grep -o "$name " > /dev/null 2>&1 || {
-	echo -e "| Error: ${f_light_red}it appears like the list $name is not a valid reference.${b_black} Typo?
-+---------------------------------------------------------------+"
+	echo -e "│ Error: ${f_light_red}it appears like the list $name is not a valid reference.${b_black} Typo?
+├───────────────────────────────────────────────────────────────┤"
 	exit
 	} 2> /dev/null
 	}
@@ -431,7 +469,7 @@ pstatus() {
 	sizebb=$(ipset -L $name.bro 2> /dev/null | head -5 | tail -1 | awk '{print $4}' || echo 0)
 	sizem=$((sizeb/1024))
 	sizemm=$((sizebb/1024))
-	age=$([ -e "$name.cidr" ] && echo $(( $(date +%s) - $(date -r "$name.cidr" +%s) )) || echo 0)
+	age=$(get_file_age "$name.cidr")
 	if [ $statusaaa -eq 0 ]; then
 		if [ $statusaa -eq 1 ]; then
 			if [ $statusa -gt 2 ]; then
@@ -476,8 +514,8 @@ pstatus() {
 
 	# Format age using format_time() for consistency
 	age=$(format_time "$age")
-	ipta=$(cat ./iptables-add | grep $name | wc -l)
-	iptb=$(iptables -L | grep $name | wc -l)
+	ipta=$(cat ./iptables-add | grep "$name" | wc -l)
+	iptb=$(iptables -L | grep "$name" | wc -l)
 	if [ $(( ipta + iptb )) -eq 4 ]; then 
 		d="${f_light_green}Fully loaded${reset}";
 	elif [ $(( ipta + iptb )) -eq 0 ]; then 
@@ -485,31 +523,31 @@ pstatus() {
 	else 
 		d="${f_light_yellow}Partially loaded${reset}";
 	fi
-	echo -e "| Primary lists and iptables are used for filtering, they are both
-| expected to be Fully Loaded while P2Partisan operates.
-| Secondary lists are used for updates only, so empty when unused
-| cidr file are created after a list update and allow quick startup
-+---------------------------------------------------------------+
-|           Name: $name
-|            URL: $(cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | grep $name | awk '{print $2}')
-+---------------------------------------------------------------+
-|  ipset primary: $a
-|          items: $(ipset -L $name 2> /dev/null | tail -n +8 | wc -l || echo 0)
-|    size in RAM: $sizem KB
-+---------------------------------------------------------------+
-| ipset seconday: $b
-|          items: $(ipset -L $name.bro 2> /dev/null | tail -n +8 | wc -l || echo 0)
-|    size in RAM: $sizemm KB
-+---------------------------------------------------------------+
-|      cidr file: $c
-|          items: $(cat $name.cidr 2> /dev/null | tail -n +2 | wc -l || echo 0)
-|   size on disk: $(ls -lh $name.cidr 2> /dev/null | awk '{print $5}' || echo 0)
-|   Last updated: $(date -r $name.cidr '+%H:%M:%S %d/%b/%y' 2> /dev/null) | ${f_light_white}$age${reset} ago
-+---------------------------------------------------------------+
-|       iptables: $d
+	echo -e "│ Primary lists and iptables are used for filtering, they are both
+│ expected to be Fully Loaded while P2Partisan operates.
+│ Secondary lists are used for updates only, so empty when unused
+│ cidr file are created after a list update and allow quick startup
+├───────────────────────────────────────────────────────────────┤
+│           Name: $name
+│            URL: $(cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | grep $name | awk '{print $2}')
+├───────────────────────────────────────────────────────────────┤
+│  ipset primary: $a
+│          items: $(ipset -L ${name} 2> /dev/null | awk 'NR>=8 {c++} END {print c+0}' || echo 0)
+│    size in RAM: $sizem KB
+├───────────────────────────────────────────────────────────────┤
+│ ipset seconday: $b
+│          items: $(ipset -L ${name}.bro 2> /dev/null | awk 'NR>=8 {c++} END {print c+0}' || echo 0)
+│    size in RAM: $sizemm KB
+├───────────────────────────────────────────────────────────────┤
+│      cidr file: $c
+│          items: $(awk 'NR>=2 {c++} END {print c+0}' \"${name}.cidr\" 2> /dev/null || echo 0)
+│   size on disk: $(ls -lh ${name}.cidr 2> /dev/null | awk '{print $5}' || echo 0)
+│   Last updated: $(date -r ${name}.cidr '+%H:%M:%S %d/%b/%y' 2> /dev/null) | ${f_light_white}${age}${reset} ago
+├───────────────────────────────────────────────────────────────┤
+│       iptables: $d
 $(cat ./iptables-add | grep $name)
 $(iptables -L | grep $name)
-+---------------------------------------------------------------+${reset}
+└────────────────────────────────────────────────────────────────${reset}
 "
 
 	exit
@@ -519,8 +557,8 @@ $(iptables -L | grep $name)
 	running3=$(iptables -L | grep -v Chain| grep 'P2PARTISAN-IN\|P2PARTISAN-OUT'  2> /dev/null | wc -l)
 	running4=$([ -f "$pidfile" ] && echo 1 || echo 0)
 	running5=$(NG script_fire | grep "p2partisan.sh restart" >/dev/null && echo "${f_light_green}Yes${reset}" || echo "${f_light_red}No${reset}")
-	running7=$(tail -200 $logfile | grep Dropped | tail -1 | awk '{printf "| %s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}'| sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g')
-	running7a=$(tail -200 $logfile | grep Rejected | tail -1 | awk '{printf "| %s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}'| sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g')
+	running7=$(tail -200 $logfile | grep Dropped | tail -1 | awk '{printf "│ %s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}'| sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g')
+	running7a=$(tail -200 $logfile | grep Rejected | tail -1 | awk '{printf "│ %s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}'| sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g')
 	running9=$(NG script_fire | grep "P2Partisan-tutor" >/dev/null && echo "${f_light_green}Yes${reset}" || echo "${f_light_red}No${reset}")
 		logwin=$(( now - 86400 ))
 		tail -1500 $logfile | grep -i "P2Partisan tutor had" > /tmp/tutor.tmp
@@ -539,43 +577,43 @@ $(iptables -L | grep $name)
 		[ -f /tmp/tutor.temp ] && runningB=$(wc -l /tmp/tutor.temp 2> /dev/null | awk '{print $1}')
 		[ -f /tmp/tutor.tmp ] && rm /tmp/tutor.tmp; [ -f /tmp/tutor.temp ] && rm /tmp/tutor.temp || runningB=0
 		runningD=$([ -f ./runtime ] && cat ./runtime)
-		runningF=$(iptables -L P2PARTISAN-DROP-IN 2> /dev/null | grep DEBUG | wc -l)
+		runningF=$(get_debug_status)
 			from=$([ -f ./iptables-add ] && head -1 ./iptables-add 2> /dev/null | awk '{print $2}' || echo $now)
 		runtime=$(( now - from ))
 		runtime=$(format_time "$runtime")
 		drop_packet_count_in=$(iptables -vL P2PARTISAN-DROP-IN 2> /dev/null | grep " DROP " | awk '{print $1}')
 		drop_packet_count_out=$(iptables -vL P2PARTISAN-DROP-OUT 2> /dev/null | grep " REJECT " | awk '{print $1}')
-			if [ -e ./iptables-debug-del ]; then
-				dfrom=$([ -f ./iptables-debug ] && head -1 ./iptables-debug 2> /dev/null | awk '{print $2}')
-				druntime=$(( now - dfrom ))
-				h=$(( (druntime / 3600) % 24 ))
-				m=$(( (druntime / 60) % 60 ))
-				s=$(( druntime % 60 ))
-				druntime=$(printf "%02d:%02d:%02d\n" $h $m $s)
-				dendtime=$([ -f ./iptables-debug-del ] && head -2 ./iptables-debug-del | tail -n 1 | awk '{print $2}')
-				ttime=$(( dendtime / 60 ))
-				ttime=$(( dfrom + dendtime ))
-				leftime=$(( ttime - now ))
-				m=$(( (leftime / 60) % 60 ))
-				s=$(( leftime % 60 ))
-				leftime=$(printf "%02d:%02d:%02d\n" $h $m $s)
-				zzztime=$(( dendtime / 60 ))
-			fi
+		if [ -e ./iptables-debug-del ]; then
+			dfrom=$([ -f ./iptables-debug ] && head -1 ./iptables-debug 2> /dev/null | awk '{print $2}')
+			druntime=$(( now - dfrom ))
+			h=$(( (druntime / 3600) % 24 ))
+			m=$(( (druntime / 60) % 60 ))
+			s=$(( druntime % 60 ))
+			druntime=$(printf "%02d:%02d:%02d\n" $h $m $s)
+			dendtime=$([ -f ./iptables-debug-del ] && head -2 ./iptables-debug-del | tail -n 1 | awk '{print $2}')
+			ttime=$(( dendtime / 60 ))
+			ttime=$(( dfrom + dendtime ))
+			leftime=$(( ttime - now ))
+			m=$(( (leftime / 60) % 60 ))
+			s=$(( leftime % 60 ))
+			leftime=$(printf "%02d:%02d:%02d\n" $h $m $s)
+			zzztime=$(( dendtime / 60 ))
+		fi
 
-	if [ "$running3" -eq 0 ] && [ "$running4" -eq 0 ]; then
+		if [ "$running3" -eq 0 ] && [ "$running4" -eq 0 ]; then
 				running8="${f_light_red}No${reset}"
-	elif [ "$running3" -eq 0 ] && [ "$running4" -eq 1 ]; then
+		elif [ "$running3" -eq 0 ] && [ "$running4" -eq 1 ]; then
 				running8="${f_light_magenta}Loading...${reset}"
-	elif [ "$running3" -lt 4 ] && [ "$running4" -eq 0 ]; then
+		elif [ "$running3" -lt 4 ] && [ "$running4" -eq 0 ]; then
 				running8="${f_light_red}Not quite... try to run \"p2partisan.sh update\"${b_black}"
-	elif [ "$running3" -eq 4 ] && [ "$running4" -eq 1 ]; then
+		elif [ "$running3" -eq 4 ] && [ "$running4" -eq 1 ]; then
 				running8="${f_light_green}Yes${reset}"
 		fi
 
 		if [ $runningF -eq 1 ]; then
 			runningF="${f_light_magenta}On${b_black} IP ${f_light_yellow}$(iptables -L P2PARTISAN-DROP-IN  2> /dev/null | grep DEBUG |  awk '{print $5}') ${f_light_yellow}$f${b_black}running for ${f_light_yellow}$druntime${b_black} /${f_light_yellow}$zzztime${b_black} min (${f_light_yellow}$leftime${b_black} left)"
 		elif [ $runningF -gt 1 ]; then
-			runningF="\033[1;35mOn - reverse \033[0;40m(entire LAN except port \033[1;33m$(iptables -L P2PARTISAN-DROP-IN  2> /dev/null | grep DEBUG | head -1 |  awk '{print $7}' | cut -f2 -d!) ) \033[1;33m$f\033[0;40mrunning for \033[1;33m$druntime\033[0;40m /\033[1;33m$zzztime\033[0;40m min (\033[1;33m$leftime\033[0;40m left)"
+			runningF="${f_light_magenta}On - reverse ${b_black}(entire LAN except port ${f_light_yellow}$(iptables -L P2PARTISAN-DROP-IN  2> /dev/null | grep DEBUG | head -1 |  awk '{print $7}' | cut -f2 -d!) ) ${f_light_yellow}$f${b_black}running for ${f_light_yellow}$druntime${b_black} /${f_light_yellow}$zzztime${b_black} min (${f_light_yellow}$leftime${b_black} left)"
 		else
 			runningF="Off"
 		fi
@@ -592,45 +630,45 @@ $(iptables -L | grep $name)
 	greyip=$(ipset -L greylist 2> /dev/null | grep -E "(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])" | wc -l)
 
 	echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|            _______ __          __
-|           |     __|  |_.---.-.|  |_.--.--.-----.
-|           |__     |   _|  _  ||   _|  |  |__ --|
-|           |_______|____|___._||____|_____|_____|
-|
-| Release version:  ${f_light_white}$version${reset}
-+---------------------------------------------------------------+
-|         Running:  $running8
-|         Autorun:  $running5
-|           Tutor:  $running9 / ${f_light_white}$runningB${reset} problems in the last 24h
-|        Debugger:  $runningF
-| Partisan uptime:  ${f_light_white}$runtime${reset}
-|    Startup time:  ${f_light_white}$runningD${reset} seconds
-|      Dropped in:  ${f_light_white}$drop_packet_count_in${reset}
-|    Rejected out:  ${f_light_white}$drop_packet_count_out${reset}
-+---------------------------------------------------------------+"
-echo -e "|       Black IPs:  ${f_light_white}$blackip${reset}"
-echo -e "|        Grey IPs:  ${f_light_white}$greyip${reset}"
-echo -e "|       White IPs:  ${f_light_white}$whiteip $whiteextra${reset}"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│            _______ __          __
+│           |     __|  |_.---.-.|  |_.--.--.-----.
+│           |__     |   _|  _  ||   _|  |  |__ --|
+│           |_______|____|___._||____|_____|_____|
+│
+│ Release version:  ${f_light_white}$version${reset}
+├───────────────────────────────────────────────────────────────┤
+│         Running:  $running8
+│         Autorun:  $running5
+│           Tutor:  $running9 / ${f_light_white}${runningB}${reset} problems in the last 24h
+│        Debugger:  $runningF
+│ Partisan uptime:  ${f_light_white}${runtime}${reset}
+│    Startup time:  ${f_light_white}${runningD}${reset} seconds
+│      Dropped in:  ${f_light_white}${drop_packet_count_in}${reset}
+│    Rejected out:  ${f_light_white}${drop_packet_count_out}${reset}
+├───────────────────────────────────────────────────────────────┤"
+echo -e "│       Black IPs:  ${f_light_white}${blackip}${reset}"
+echo -e "│        Grey IPs:  ${f_light_white}${greyip}${reset}"
+echo -e "│       White IPs:  ${f_light_white}${whiteip} ${whiteextra}${reset}"
 transmissionenable=$(NG bt_enable)
 if [ -z "$transmissionenable" ]; then
-    echo "|  TransmissionBT:  Not available"
+    echo "│  TransmissionBT:  Not available"
     elif [ $transmissionenable -eq 0 ]; then
-    echo "|  TransmissionBT:  Off"
+    echo "│  TransmissionBT:  Off"
     else
-    echo -e "|  TransmissionBT:  ${f_light_green}On${reset}"
+    echo -e "│  TransmissionBT:  ${f_light_green}On${reset}"
 	transmissionport=$(NG bt_port 2> /dev/null)
 	greyports_tcp=$greyports_tcp,$transmissionport
 	greyports_udp=$greyports_udp,$transmissionport
 fi
 echo $greyports_tcp | format_ports | while read w; do
-	echo -e "|  Grey ports TCP:  ${f_light_white}$w${reset}"
+	echo -e "│  Grey ports TCP:  ${f_light_white}${w}${reset}"
 	done
 echo $greyports_udp | format_ports | while read w; do
-	echo -e "|  Grey ports UDP:  ${f_light_white}$w${reset}"
+	echo -e "│  Grey ports UDP:  ${f_light_white}${w}${reset}"
 	done
 echo $whiteports_tcp | format_ports | while read w; do
-	echo -e "| White ports TCP:  ${f_light_white}$w${reset}"
+	echo -e "│ White ports TCP:  ${f_light_white}${w}${reset}"
 	done
 echo $whiteports_udp | format_ports | while read w; do
     # Use centralized color aliases from nvram_ops (no local color definitions)
@@ -642,7 +680,7 @@ echo $whiteports_udp | format_ports | while read w; do
     if [ $p2 -eq "0" ]; then
 		w=$(echo -e "$w" | sed -e "s/^68,/${b_grey}68${f_light_white},/g" | sed -e "s/,68,/,${b_grey}68${b_black}${f_light_white},/g" | sed -e "s/,68$/,${b_grey}68/g")
     fi
-    echo -e "| White ports UDP:  ${f_light_white}$w${reset}"
+    echo -e "│ White ports UDP:  ${f_light_white}${w}${reset}"
 	done
 cat blacklists | grep -Ev "^#|^$" | tr -d "\r" |
 (
@@ -718,7 +756,7 @@ cat blacklists | grep -Ev "^#|^$" | tr -d "\r" |
 		if [ -f ./$name.cidr ]; then
 			cat ./$name.cidr | cut -d" " -f3 | grep -F "$adminip" > /dev/null &&
 			{
-				age=$([ -e "$name.cidr" ] && echo $(( $(date +%s) - $(date -r "$name.cidr" +%s) )) || echo 0)
+				age=$(get_file_age "$name.cidr")
 				d=$(( age / 86400 ))
 				if [ $d -eq 7 ]; then
 					c="${f_light_yellow}o${reset}"
@@ -732,14 +770,15 @@ cat blacklists | grep -Ev "^#|^$" | tr -d "\r" |
 			c="${f_light_white}e${reset}"
 		fi
 
-		echo -e "|    Blacklist_$counter:  [$a] [$b] [$c] [$i] - $sizem KB - ${f_light_white}$name${reset}"
+		echo -e "│    Blacklist_$counter:  [$a] [$b] [$c] [$i] - $sizem KB - ${f_light_white}$name${reset}"
 		sizeram=$((sizeram+sizeb+sizebb))
 	done
 
 	sizeram=$((sizeram/1024))
-	echo "|                    ^   ^   ^   ^"
-	echo -e "|      maxload: ${f_light_white}$maxconcurrentlistload${reset} - ${b_grey}${f_light_white}pri sec cid ipt${reset} - [${f_light_white}e${reset}]mpty [${f_light_white}l${reset}]oading l[${f_light_white}o${reset}]aded [${f_light_white}p${reset}]artial [${f_light_white}q${reset}]ueued"
-	echo -e "|    Consumed RAM:  ${f_light_white}$sizeram${reset} KB"
+	echo "│                    ^   ^   ^   ^"
+	echo -e "│      maxload: ${f_light_white}$maxconcurrentlistload${reset} - ${b_grey}${f_light_white}pri sec cid ipt${reset} - [${f_light_white}e${reset}]mpty [${f_light_white}l${reset}]oading l[${f_light_white}o${reset}]aded [${f_light_white}p${reset}]artial [${f_light_white}q${reset}]ueued"
+	echo -e "│    Consumed RAM:  ${f_light_white}$sizeram${reset} KB"
+	echo -e "└────────────────────────────────────────────────────────────────${reset}"
 )
 
 if [ $autorun_availability_check = 1 ]; then
@@ -749,58 +788,58 @@ fi
 
 pautorunset() {
 echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|            ______               __               __
-|           |      |.-----.-----.|  |_.----.-----.|  |
-|           |   ---||  _  |     ||   _|   _|  _  ||  |
-|           |______||_____|__|__||____|__| |_____||__|
-|
-+--------------------------- Autorun ---------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│            ______               __               __
+│           |      |.-----.-----.|  |_.----.-----.|  |
+│           |   ---||  _  |     ||   _|   _|  _  ||  |
+│           |______||_____|__|__||____|__| |_____||__|
+│
+├─────────────────────────── Autorun ────────────────────────────"
 		p=$(NG script_fire | grep "p2partisan.sh restart" | grep -v cru | wc -l)
 		if [ $p -eq "0" ] ; then
 				t=$(NG script_fire)
 				t=$(printf "%s\n%s$P2Partisandir/p2partisan.sh restart\n" "$t" "$av") ; NS "script_fire=$t"
 		fi
 		plog "P2Partisan AUTO RUN is ON"
-				echo -e "+---------------------------------------------------------------+${reset}"
+				echo -e "└────────────────────────────────────────────────────────────────${reset}"
 	NC
 }
 
 pautorununset() {
 	echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|            ______               __               __
-|           |      |.-----.-----.|  |_.----.-----.|  |
-|           |   ---||  _  |     ||   _|   _|  _  ||  |
-|           |______||_____|__|__||____|__| |_____||__|
-|
-+--------------------------- Autorun ---------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│            ______               __               __
+│           |      |.-----.-----.|  |_.----.-----.|  |
+│           |   ---||  _  |     ||   _|   _|  _  ||  |
+│           |______||_____|__|__||____|__| |_____||__|
+│
+├─────────────────────────── Autorun ────────────────────────────"
 	p=$(NG script_fire | grep "p2partisan.sh restart" | grep -v cru | wc -l)
 	if [ $p -eq "1" ]; then
 		t=$(NG script_fire)
 		t=$(printf "%s" "$t" | grep -v "p2partisan.sh restart") ; NS "script_fire=$t"
 	fi
 	plog "P2Partisan AUTO RUN is OFF"
-	echo -e "+---------------------------------------------------------------+${reset}"
+	echo -e "└────────────────────────────────────────────────────────────────${reset}"
 	NC
 }
 
 pdetective() {
 	echo -e "${b_black}
-+------------------------- P2Partisan --------------------------+
-|         __         __               __   __
-|     .--|  |.-----.|  |_.-----.----.|  |_|__|.--.--.-----.
-|     |  _  ||  -__||   _|  -__|  __||   _|  ||  |  |  -__|
-|     |_____||_____||____|_____|____||____|__| \___/|_____| BETA
-|
-+---------------------------------------------------------------+
-| After an investigation it appears that the following socket/s
-| should be considered a greyports candidates. Consider re-run the
-| command multiple times to reduce the number of false positive. Once
-| identified the port/s can be added under greyports_tcp & greyports_udp.
-+---------------------------------------------------------------+"
-	cat /proc/net/ip_conntrack | awk '{for (i=1;i<=NF;i++) if ($i~/(src|dst|sport|dport)=/) printf "%s ",$i;print "\n"}' | grep -vE '^$' | sed s/\ src=/'\n'/ | awk '{print $1" "$3" "$2" "$4}' | sed s/\ dst=/'\n'/ | sed s/sport=//  | sed s/dport=// | grep -E '(^10\.|(^172\.1[6-9]\.|^172\.2[0-9]\.|^172\.3[0-1]\.)|^192\.168\.)' | grep -v "$lan_ipaddr$" | grep -v "$lan1_ipaddr$" | awk '/[0-9]/ {cnt[$1" "$2]++}END{for(k in cnt) print cnt[k],k}' | sort -nr | while read socket; do first_field=$(echo "$socket" | cut -f1 -d" "); if [ "$first_field" -gt "$greyline" ]; then echo "$socket" | awk '{print "| "$2" "$3" - "$1" Sessions"}'; fi; done
-	echo -e "+---------------------------------------------------------------+${reset}"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│         __         __               __   __
+│     .--|  |.-----.|  |_.-----.----.|  |_|__|.--.--.-----.
+│     |  _  ||  -__||   _|  -__|  __||   _|  ||  |  |  -__|
+│     |_____||_____||____|_____|____||____|__| \___/|_____| BETA
+│
+├───────────────────────────────────────────────────────────────┤
+│ After an investigation it appears that the following socket/s
+│ should be considered a greyports candidates. Consider re-run the
+│ command multiple times to reduce the number of false positive. Once
+│ identified the port/s can be added under greyports_tcp & greyports_udp.
+├───────────────────────────────────────────────────────────────┤"
+	cat /proc/net/ip_conntrack | awk '{for (i=1;i<=NF;i++) if ($i~/(src|dst|sport|dport)=/) printf "%s ",$i;print "\n"}' | grep -vE '^$' | sed s/\ src=/'\n'/ | awk '{print $1" "$3" "$2" "$4}' | sed s/\ dst=/'\n'/ | sed s/sport=//  | sed s/dport=// | grep -E '(^10\.|(^172\.1[6-9]\.|^172\.2[0-9]\.|^172\.3[0-1]\.)|^192\.168\.)' | grep -v "$lan_ipaddr$" | grep -v "$lan1_ipaddr$" | awk '/[0-9]/ {cnt[$1" "$2]++}END{for(k in cnt) print cnt[k],k}' | sort -nr | while read socket; do first_field=$(echo "$socket" | cut -f1 -d" "); if [ "$first_field" -gt "$greyline" ]; then echo "$socket" | awk '{print "│ "$2" "$3" - "$1" Sessions"}'; fi; done
+	echo -e "└───────────────────────────────────────────────────────────────┘${reset}"
 }
 
 pupgrade() {
@@ -809,43 +848,43 @@ pupgrade() {
 	latest=$(cut -c3-31 < ./latest)
 	current=$(grep "[p]2partisan v[0-9]" ./p2partisan.sh | head -1 | cut -c3-32)
 	if [ "$latest" = "$current" ]; then
-		echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|          _______                            __
-|         |   |   |.-----.-----.----.---.-.--|  |.-----.
-|         |   |   ||  _  |  _  |   _|  _  |  _  ||  -__|
-|         |_______||   __|___  |__| |___._|_____||_____|
-|                  |__|  |_____|
-|
-+---------------------------------------------------------------+
+		echo -e "${b_black}
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│          _______                            __
+│         |   |   |.-----.-----.----.---.-.--|  |.-----.
+│         |   |   ||  _  |  _  |   _|  _  |  _  ||  -__|
+│         |_______||   __|___  |__| |___._|_____||_____|
+│                  |__|  |_____|
+│
+└────────────────────────────────────────────────────────────────
 You're already running the latest version of P2Partisan
-\033[0;39m"
+${reset}"
 		else
-			echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|          _______                            __
-|         |   |   |.-----.-----.----.---.-.--|  |.-----.
-|         |   |   ||  _  |  _  |   _|  _  |  _  ||  -__|
-|         |_______||   __|___  |__| |___._|_____||_____|
-|                  |__|  |_____|
-|
-+---------------------------------------------------------------+
-| There's a new P2Partisan update available. Do you want to upgrade?
-|
-|                  current = $current
-|
-|                          to
-|
-|                   latest = $latest
-|
-| y/n"
+			echo -e "${b_black}
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│          _______                            __
+│         |   |   |.-----.-----.----.---.-.--|  |.-----.
+│         |   |   ||  _  |  _  |   _|  _  |  _  ||  -__|
+│         |_______||   __|___  |__| |___._|_____||_____|
+│                  |__|  |_____|
+│
+├───────────────────────────────────────────────────────────────┤
+│ There's a new P2Partisan update available. Do you want to upgrade?
+│
+│                  current = $current
+│
+│                          to
+│
+│                   latest = $latest
+│
+│ y/n"
 		read answer
 	if [ "$answer" = "y" ]; then
 wget -q -O ./p2partisan_new.sh https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan.sh
 pupgraderoutine
 				else
-				echo -e "| Upgrade skipped. Quitting...
-+---------------------------------------------------------------+\033[0;39m"
+				echo -e "│ Upgrade skipped. Quitting...
+└───────────────────────────────────────────────────────────────┘${reset}"
 				exit
 				fi
 
@@ -855,16 +894,16 @@ pupgraderoutine
 pupgradebeta() {
 		[ -f p2partisan_new.sh ] && rm -f "p2partisan_new.sh" 2> /dev/null
 		wget -q -O - https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan-beta.sh | grep "[p]2partisan v[0-9]" > ./latest
-		echo "| Do you want to install the latest testing beta (not suggested)?
-|
-| y/n"
+		echo "│ Do you want to install the latest testing beta (not suggested)?
+│
+│ y/n"
 		read answer
 				if [ "$answer" = "y" ]; then
 wget -q -O ./p2partisan_new.sh https://raw.githubusercontent.com/Fresh-Tomato/P2Partisan-6/refs/heads/main/p2partisan-beta.sh 
 pupgraderoutine
 				else
-				echo -e "| Beta upgrade skipped. Quitting...
-+---------------------------------------------------------------+\033[0;39m"
+				echo -e "│ Beta upgrade skipped. Quitting...
+└───────────────────────────────────────────────────────────────┘${reset}"
 
 				exit
 				fi
@@ -896,8 +935,8 @@ pupgraderoutine() {
 	echo -e "${b_black}| 5/6) Setting up permissions"
 	chmod -R 777 ./p2partisan.sh
 	echo -e "${b_black}| 6/6) all done, ${f_light_green}Please run the script manually!${b_black}
-| NOTE: autorun setting is left as it was found
-+---------------------------------------------------------------+
+│ NOTE: autorun setting is left as it was found
+└───────────────────────────────────────────────────────────────┘
 ${reset}"
 exit
 }
@@ -907,107 +946,130 @@ ptutor() {
 	pwhitelist
 	pgreylist
 	pblacklistcustom
-	running3=$(iptables -L | grep -v Chain | grep 'P2PARTISAN-IN\|P2PARTISAN-OUT' 2> /dev/null | wc -l)
+	
+	# Cache iptables output once to avoid multiple expensive calls
+	iptables_output=$(iptables -L 2>/dev/null)
+	
+	# Validate all required P2Partisan chains exist (expect exactly 4 main chains + LISTS chains)
+	chain_count=$(echo "$iptables_output" | grep -c '^Chain P2PARTISAN-\(IN\|OUT\|LISTS-IN\|LISTS-OUT\|DROP-IN\|DROP-OUT\)')
+	wanin_rules=$(echo "$iptables_output" | awk '/^Chain wanin/,/^Chain/ {if (/P2PARTISAN-IN/) print}' | wc -l)
+	wanout_rules=$(echo "$iptables_output" | awk '/^Chain wanout/,/^Chain/ {if (/P2PARTISAN-OUT/) print}' | wc -l)
+	
+	# Check pidfile
 	running4=$([ -f "$pidfile" ] && echo 1 || echo 0)
-	runningE=$(iptables -L wanin | grep P2PARTISAN-IN  2> /dev/null | wc -l)
+	
+	# Validate chains exist
+	if [ "$chain_count" -lt 6 ]; then
+		plog "P2Partisan tutor had to restart due to: missing iptables chains (found $chain_count, expected 6)"
+		pforcestop
+		pstart
+		return
+	fi
+	
+	# Schedule window for updates
 	schfrom=${scheduleupdates%%,*}
 	schto=${scheduleupdates#*,}
 
-	cat blacklists |  grep -Ev "^#|^$" | tr -d "\r" |
+	# Validate each blacklist has iptables rules and check age
+	cat blacklists | grep -Ev "^#|^$" | tr -d "\r" |
 	(
 	while read line
 	do
-	name=$(echo "$line" | awk '{print $1}')
-	statusbbb=$(ipset -T $name.bro $adminip 2> /dev/null && echo 1 || echo 0)
-		iptables -L P2PARTISAN-LISTS-IN | grep $name > /dev/null || {
-		plog "P2Partisan tutor had to reinstall the iptables due to: P2PARTISAN-LIST-IN $name instruction missing"
-		./iptables-del ; ./iptables-add
-		exit
+		name=$(echo "$line" | awk '{print $1}')
+		
+		# Check both LISTS-IN and LISTS-OUT have rules for this blacklist
+		# Use simple per-chain greps for robustness (busybox grep compatible)
+		iptables -L P2PARTISAN-LISTS-IN 2>/dev/null | grep -F "$name" >/dev/null 2>&1 || {
+			plog "P2Partisan tutor had to reinstall iptables due to: $name missing from P2PARTISAN-LISTS-IN or P2PARTISAN-LISTS-OUT"
+			./iptables-del ; ./iptables-add
+			exit
 		}
-		iptables -L P2PARTISAN-LISTS-OUT | grep $name  > /dev/null || {
-		plog "P2Partisan tutor had to reinstall the iptables due to: P2PARTISAN-LIST-OUT $name instruction missing"
-		./iptables-del ; ./iptables-add
-		exit
+		iptables -L P2PARTISAN-LISTS-OUT 2>/dev/null | grep -F "$name" >/dev/null 2>&1 || {
+			plog "P2Partisan tutor had to reinstall iptables due to: $name missing from P2PARTISAN-LISTS-IN or P2PARTISAN-LISTS-OUT"
+			./iptables-del ; ./iptables-add
+			exit
 		}
-	age=$(( $(date +%s) - $(date -r "$name.cidr" +%s) ))
-	if [ "$age" -gt "604800" ] && [ "$h" -ge "$schfrom" ] && [ "$h" -le "$schto" ]; then
+		
+		# Check file age and secondary list status
+		age=$(get_file_age "$name.cidr")
+		if [ "$age" -gt 604800 ] && [ "$h" -ge "$schfrom" ] && [ "$h" -le "$schto" ]; then
 			plog "P2Partisan is updating list $name"
 			pforcestop $name
 			exit
 		fi
-	if [ "$age" -gt "300" ] && [ "$statusbbb" -eq 1 ]; then
+		
+		# Clear stale secondary list if needed
+		if [ "$age" -gt 300 ] && ipset -T $name.bro $adminip >/dev/null 2>&1; then
 			plog "P2Partisan is clearing the $name secondary list"
 			ipset -F $name.bro
 		fi
 	done
 	)
-	if [ "$runningE" -gt 1 ]; then
-		pforcestop
+	
+	# Validate wanin/wanout hooks and pidfile consistency
+	if [ "$wanin_rules" -gt 1 ] || [ "$wanout_rules" -gt 1 ]; then
 		plog "P2Partisan tutor had to restart due to: iptables redundant rules found"
+		pforcestop
 		pstart
-	elif [ "$running3" -eq 4 ] && [ "$running4" -eq 0 ]; then
+	elif [ "$chain_count" -ge 6 ] && [ "$running4" -eq 0 ]; then
 		plog "P2Partisan tutor had to restart due to: pid file missing"
 		pforcestop
 		pstart
-	# elif [[ $running3 -eq "0" ]] && [[ $running4 -eq "1" ]]; then
-		# plog "P2Partisan tutor had to restart due to: iptables instructions missing"
-		# pforcestop
-		# pstart
-	elif [ "$running3" -ne 4 ] && [ "$running4" -eq 1 ]; then
+	elif [ "$chain_count" -lt 6 ] && [ "$running4" -eq 1 ]; then
 		plog "P2Partisan might be loading, I'll wait 10 seconds..."
 		sleep 10
-	if [ "$running3" -ne 4 ] && [ "$running4" -eq 1 ]; then
-			plog "P2Partisan tutor had to restart due to iptables instruction missing"
+		# Re-check after wait
+		if [ "$(iptables -L 2>/dev/null | grep -c '^Chain P2PARTISAN-')" -lt 6 ] && [ -f "$pidfile" ]; then
+			plog "P2Partisan tutor had to restart due to: iptables instruction missing"
 			pforcestop
 			pstart
 		fi
 	else
-	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                _______         __
-|               |_     _|.--.--.|  |_.-----.----.
-|                 |   |  |  |  ||   _|  _  |   _|
-|                 |___|  |_____||____|_____|__|
-|
-+---------------------------------------------------------------+
-| P2Partisan up and running. The tutor is happy
-+---------------------------------------------------------------+\033[0;39m"
+		echo -e "${b_black}
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                _______         __
+│               |_     _|.--.--.|  |_.-----.----.
+│                 |   |  |  |  ||   _|  _  |   _|
+│                 |___|  |_____||____|_____|__|
+│
+├───────────────────────────────────────────────────────────────┤
+│ P2Partisan up and running. The tutor is happy
+└───────────────────────────────────────────────────────────────┘${reset}"
 	fi
 }
 
 ptutorset() {
 	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                _______         __
-|               |_     _|.--.--.|  |_.-----.----.
-|                 |   |  |  |  ||   _|  _  |   _|
-|                 |___|  |_____||____|_____|__|
-|
-+-------------------------- Scheduler --------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                _______         __
+│               |_     _|.--.--.|  |_.-----.----.
+│                 |   |  |  |  ||   _|  _  |   _|
+│                 |___|  |_____||____|_____|__|
+│
+├────────────────────────── Scheduler ───────────────────────────"
 	cru d P2Partisan-tutor
-	ab=$(tr -cd 0-5 </dev/urandom | head -c 1)
-	a=$(tr -cd 0-9 </dev/urandom | head -c 1)
-	a=$(printf "%s%s" "$ab" "$a")
-	scheduleme="$a * * * *"
 
-	p=$(NG script_fire | grep "cru a P2Partisan-tutor" | wc -l)
+	random_minute=$(( RANDOM % 60 ))
+	scheduleme="$random_minute * * * *"
 
-		t=$(NG script_fire)
-		t=$(printf "%s\ncru a P2Partisan-tutor \"%s %s/p2partisan.sh tutor\"\n" "$t" "$scheduleme" "$P2Partisandir") ; NS "script_fire=$t"
+	NG script_fire | grep -q "cru a P2Partisan-tutor" || { cru a P2Partisan-tutor "$scheduleme $P2Partisandir/p2partisan.sh tutor"; }
+
+	t=$(NG script_fire)
+	t=$(printf "%s\ncru a P2Partisan-tutor \"%s %s/p2partisan.sh tutor\"\n" "$t" "$scheduleme" "$P2Partisandir") ; NS "script_fire=$t"
 	plog "P2Partisan tutor is ON"
-	echo -e "+---------------------------------------------------------------+\033[0;39m"
-	nvram commit
+	echo -e "└───────────────────────────────────────────────────────────────┘${reset}"
+	NC
 }
 
 ptutorunset() {
 	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                _______         __
-|               |_     _|.--.--.|  |_.-----.----.
-|                 |   |  |  |  ||   _|  _  |   _|
-|                 |___|  |_____||____|_____|__|
-|
-+-------------------------- Scheduler --------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                _______         __
+│               |_     _|.--.--.|  |_.-----.----.
+│                 |   |  |  |  ||   _|  _  |   _|
+│                 |___|  |_____||____|_____|__|
+│
+├────────────────────────── Scheduler ───────────────────────────"
 	cru d P2Partisan-tutor
 	p=$(NG script_fire | grep "cru a P2Partisan-tutor" | wc -l)
 	if [ $p -eq "1" ] ; then
@@ -1015,39 +1077,40 @@ ptutorunset() {
 		t=$(printf "%s\ncru a P2Partisan-tutor \"%s %s/p2partisan.sh tutor\"\n" "$t" "$schedule" "$P2Partisandir" | grep -v "cru a P2Partisan-tutor") ; NS "script_fire=$t"
 	fi
 	plog "P2Partisan tutor is OFF"
-	echo -e "+---------------------------------------------------------------+\033[0;39m"
-	nvram commit
+	echo -e "└───────────────────────────────────────────────────────────────┘${reset}"
+	NC
 }
 
 ptest() {
 
 checklist="blacklist-custom greylist whitelist $(cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | awk '{print $1}')"
 echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                  _______               __
-|                 |_     _|.-----.-----.|  |_
-|                   |   |  |  -__|__ --||   _|
-|                   |___|  |_____|_____||____|
-|
-+----------- Lists are sorted in order of precedence -----------+"
-	if [ -z "$1" ]; then
-echo "+---------------------------------------------------------------+
-| Invalid input. Please specify a valid IP address.
-+---------------------------------------------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                  _______               __
+│                 |_     _|.-----.-----.|  |_
+│                   |   |  |  -__|__ --||   _|
+│                   |___|  |_____|_____||____|
+│
+├─────────── Lists are sorted in order of precedence ────────────"
+if [ -z "$1" ]; then
+echo "├───────────────────────────────────────────────────────────────┤
+│ Invalid input. Please specify a valid IP address.
+└───────────────────────────────────────────────────────────────┘"
 	else
-	q=0
-	echo $1 | grep -E "(^[2][5][0-5].|^[2][0-4][0-9].|^[1][0-9][0-9].|^[0-9][0-9].|^[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|^[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|^[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9])$" >/dev/null 2>&1 && q=1
-	echo $1 | grep -E "(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])" >/dev/null 2>&1 && q=2
-	if [ "$q" -eq 1 ]; then
+	validate_ip "$1"
+	q=$?
+	if [ "$q" -eq 2 ]; then
+		# Plain IP address - test directly
 		echo $checklist | tr " " "\n" |
 		while read LIST
 		do
-			ipset -T $LIST $1 > /dev/null 2>&1 && if [ $LIST = "whitelist" ]; then echo -e "| \033[1;32m$1 found in        $LIST\033[0;40m"; else echo -e "| \033[1;31m$1 found in        $LIST\033[0;40m"; fi || echo -e "| $1 not found in    $LIST"
+			ipset -T $LIST $1 > /dev/null 2>&1 && if [ $LIST = "whitelist" ]; then echo -e "│ ${f_light_green}$1 found in        $LIST${b_black}"; else echo -e "│ ${f_light_red}$1 found in        $LIST${b_black}"; fi || echo -e "│ $1 not found in    $LIST"
 		done
-		echo -e "+---------------------------------------------------------------+
-|        in case of multiple match the first prevails
-+---------------------------------------------------------------+\033[0;39m"
-	elif [ "$q" -eq 2 ]; then
+		echo -e "├───────────────────────────────────────────────────────────────┤
+│        in case of multiple match the first prevails
+└───────────────────────────────────────────────────────────────┘${reset}"
+	elif [ "$q" -eq 1 ]; then
+		# Hostname - resolve and test each IP
 		echo $checklist | tr " " "\n" |
 		while read LIST
 		do
@@ -1055,15 +1118,15 @@ echo "+---------------------------------------------------------------+
 			while read IPO
 			do
 				# echo $IPO
-				ipset -T $LIST $IPO > /dev/null 2>&1 && if [ $LIST = "whitelist" ]; then printf '%-19s%s' "| $IPO"; echo -e "\033[1;32mfound in $LIST\033[0;40m" ; else printf '%-19s%s' "| $IPO"; echo -e "\033[1;31mfound in $LIST\033[0;40m"; fi || printf '%-19s%s\n' "| $IPO" "not found in $LIST"
+				ipset -T $LIST $IPO > /dev/null 2>&1 && if [ $LIST = "whitelist" ]; then printf '%-19s%s' "│ $IPO"; echo -e "${f_light_green}found in $LIST${b_black}" ; else printf '%-19s%s' "│ $IPO"; echo -e "${f_light_red}found in $LIST${b_black}"; fi || printf '%-19s%s\n' "│ $IPO" "not found in $LIST"
 			done
 		done
-		echo -e "+---------------------------------------------------------------+
-|        in case of multiple match the first prevails
-+---------------------------------------------------------------+\033[0;39m"
-		elif [ "$q" -eq 0 ]; then
-			echo -e "| Invalid input. Please specify a valid IP address or domain name.
-+---------------------------------------------------------------+\033[0;39m"
+		echo -e "├───────────────────────────────────────────────────────────────┤
+│        in case of multiple match the first prevails
+└────────────────────────────────────────────────────────────────${reset}"
+		elif [ "$q" -eq 0 ] || [ "$q" -eq 100 ]; then
+			echo -e "│ Invalid input. Please specify a valid IP address or domain name.
+└────────────────────────────────────────────────────────────────${reset}"
 		fi
 	fi
 }
@@ -1071,27 +1134,27 @@ echo "+---------------------------------------------------------------+
 
 pdebug() {
 	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                _____         __
-|               |     \.-----.|  |--.--.--.-----.
-|               |  --  |  -__||  _  |  |  |  _  |
-|               |_____/|_____||_____|_____|___  |
-|                                         |_____|
-|
-+--------------------------- Guide -----------------------------+
-| Debug allows to fully log the P2Partisan interventions given a LAN IP
-| Maximum 1 debug at the time / Debug automatically times out or can be forced off manually
-+---------------------------------------------------------------+
-| p2partisan.sh debug <LAN IP> <minutes>    Syntax
-| p2partisan.sh debug                       Displays debug status and this help text
-| p2partisan.sh debug 192.168.0.3 <1-120>   Enables debug for the given LAN IP for N min (15 default)
-| p2partisan.sh debug 192.168.0.3 9         Enables debug for the given LAN IP for 9 min
-| p2partisan.sh debug reverse <1-120>       Enables debug for all the LAN IPs excluding greyports_tcp/udp
-| p2partisan.sh debug off                   Disable debug without waiting for the timer to timeout
-| p2partisan.sh debug-display <in|out>      Display logs Syntax
-| p2partisan.sh debug-display               Displays in&out debug logs + guide
-| p2partisan.sh debug-display out           Same as above but displays outbound records only
-+-------------------------- Activity ---------------------------+"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                _____         __
+│               |     \.-----.|  |--.--.--.-----.
+│               |  --  |  -__||  _  |  |  |  _  |
+│               |_____/|_____||_____|_____|___  |
+│                                         |_____|
+│
+├───────────────────────────────────────────────────────────────┤
+│ Debug allows to fully log the P2Partisan interventions given a LAN IP
+│ Maximum 1 debug at the time / Debug automatically times out or can be forced off manually
+├───────────────────────────────────────────────────────────────┤
+│ p2partisan.sh debug <LAN IP> <minutes>    Syntax
+│ p2partisan.sh debug                       Displays debug status and this help text
+│ p2partisan.sh debug 192.168.0.3 <1-120>   Enables debug for the given LAN IP for N min (15 default)
+│ p2partisan.sh debug 192.168.0.3 9         Enables debug for the given LAN IP for 9 min
+│ p2partisan.sh debug reverse <1-120>       Enables debug for all the LAN IPs excluding greyports_tcp/udp
+│ p2partisan.sh debug off                   Disable debug without waiting for the timer to timeout
+│ p2partisan.sh debug-display <in|out>      Display logs Syntax
+│ p2partisan.sh debug-display               Displays in&out debug logs + guide
+│ p2partisan.sh debug-display out           Same as above but displays outbound records only
+├────────────────────────── Activity ────────────────────────────"
 	echo "$1" | grep -Eo "([2][5][0-5].|^[2][0-4][0-9].|^[1][0-9][0-9].|^[0-9][0-9].|^[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|^[0-9].)([2][0-5][0-5].|[2][0-4][0-9].|[1][0-9][0-9].|[0-9][0-9].|^[0-9].)([2][0-5][0-5]|[2][0-4][0-9]|[1][0-9][0-9]|[0-9][0-9]|[0-9])" >/dev/null 2>&1 && q=0 || q=1
 	echo "$1" | grep "reverse" >/dev/null 2>&1 && q=2
 	echo "$1" | grep "off" >/dev/null 2>&1 && off=1 || off=0
@@ -1109,11 +1172,11 @@ pdebug() {
 	fi
 
 	if [ "$off" -eq 1 ]; then
-		f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG )
-		fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+		fc=$(get_debug_status)
 		if [ "$fc" -ge 1 ]; then
+			f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG )
 			kill $(ps | grep -E "sleep $dendtime$" | awk '{print $1}') > /dev/null 2>&1
-			plog "| All DEBUG activities have stopped"
+			plog "│ All DEBUG activities have stopped"
 		{
 	while iptables -L P2PARTISAN-DROP-IN | grep DEBUG
 	do
@@ -1124,58 +1187,58 @@ pdebug() {
 		iptables -D P2PARTISAN-DROP-OUT 1
 	done
 	} > /dev/null 2>&1
-	echo -e "| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show debug information, if any.
-+---------------------------------------------------------------+\033[0;39m" ; exit
+	echo -e "│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show debug information, if any.
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 		else
-			echo -e "| Debug is currently off and not collecting any information.
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show existing debug information, if any.
-+---------------------------------------------------------------+\033[0;39m" ; exit
+			echo -e "│ Debug is currently off and not collecting any information.
+│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show existing debug information, if any.
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 		fi
 fi
 
 if [ -z "$1" ]; then
-	f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | awk '{print $5}' | head -1)
-	fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+	fc=$(get_debug_status)
 		if [ "$fc" -gt 1 ]; then
-echo -e "| P2partisan is currently debugging IP \033[1;33m$f\033[0;40m for \033[1;33m$druntime\033[0;40m /\033[1;33m$zzztime\033[0;40m min (\033[1;33m$leftime\033[0;40m left)
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show debug information
-+---------------------------------------------------------------+\033[0;39m" ; exit
+			f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | awk '{print $5}' | head -1)
+			echo -e "│ P2partisan is currently debugging IP ${f_light_yellow}$f${b_black} for ${f_light_yellow}$druntime${b_black} /${f_light_yellow}$zzztime${b_black} min (${f_light_yellow}$leftime${b_black} left)
+│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show debug information
+└────────────────────────────────────────────────────────────────${reset}"; exit
 	elif [ "$fc" -eq 0 ]; then
-			echo -e "| Debug is currently off and not collecting any information.
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show existing debug information, if any.
-+---------------------------------------------------------------+\033[0;39m" ; exit
+					echo -e "│ Debug is currently off and not collecting any information.
+│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show existing debug information, if any.
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 			fi
 	elif [ "$q" -eq 1 ]; then
-			echo -e "| The input \033[1;31m$1\033[0;40m doesn't appear to be a valid IP
-+---------------------------------------------------------------+\033[0;39m" ; exit
+			echo -e "│ The input ${f_light_red}$1${b_black} doesn't appear to be a valid IP
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 		fi
 
-	f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | awk '{print $5}' | head -1)
-	fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+	fc=$(get_debug_status)
 		if [ "$fc" -gt 1 ]; then
-			echo -e "| P2partisan is currently debugging IP \033[1;33m$f\033[0;40m for \033[1;33m$druntime\033[0;40m /\033[1;33m$zzztime\033[0;40m min (\033[1;33m$leftime\033[0;40m left)
-| NOTE: Only one debug at the time is possible! Command ignored.
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show the debug information
-+---------------------------------------------------------------+\033[0;39m" ; exit
+			f=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | awk '{print $5}' | head -1)
+					echo -e "│ P2partisan is currently debugging IP ${f_light_yellow}$f${b_black} for ${f_light_yellow}$druntime${b_black} /${f_light_yellow}$zzztime${b_black} min (${f_light_yellow}$leftime${b_black} left)
+│ NOTE: Only one debug at the time is possible! Command ignored.
+│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show the debug information
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 		fi
 
 if [ -z "$2" ]; then
 				minutes=15
 				time=900
 elif [ "$2" -gt 120 ] || [ "$2" -eq 0 ]; then
-				echo -e "| Please specify an acceptable time: 1 to 60 (min). If omitted 15 will be used
-| Debug NOT enabled. Exiting...
-+---------------------------------------------------------------+\033[0;39m" ; exit
+				echo -e "│ Please specify an acceptable time: 1 to 60 (min). If omitted 15 will be used
+│ Debug NOT enabled. Exiting...
+└────────────────────────────────────────────────────────────────${reset}" ; exit
 else
 				minutes=$2
 				time=$(( $2 * 60 ))
 fi
 if [ "$q" -eq 2 ]; then
 if [ -z $greyports_tcp ] || [ -z $greyports_udp ]; then
-echo -e "| It appears like you have no greyport set. This function due to the potential amount
-| of logging involved requires the both greyports_tcp and greyports_udp to be set
-| if unsure on what ports to use, try to run \033[1;33m./p2partisan.sh detective\033[0;40m
-+---------------------------------------------------------------+"
+	echo -e "│ It appears like you have no greyport set. This function due to the potential amount
+│ of logging involved requires the both greyports_tcp and greyports_udp to be set
+│ if unsure on what ports to use, try to run ${f_light_yellow}./p2partisan.sh detective${b_black}
+└────────────────────────────────────────────────────────────────${reset}"
 exit
 fi
 echo "# $now
@@ -1192,10 +1255,10 @@ iptables -I P2PARTISAN-DROP-OUT 5 -j LOG --log-prefix 'P2Partisan-DEBUG-OUT->> '
 chmod 777 ./iptables-debug  > /dev/null 2>&1
 plog "Reverse Debug started for for $minutes minute"
 ./iptables-debug 1>/dev/null &
-				echo -e "| Enabled full debug logging for all the LAN IPs for \033[1;32m$minutes\033[0;40m minutes
-| This excludes the greyports_tcp $greyports_tcp and greyports_udp $greyports_udp
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show the debug information
-+---------------------------------------------------------------+"
+				echo -e "│ Enabled full debug logging for all the LAN IPs for ${f_light_green}$minutes${b_black} minutes
+	| This excludes the greyports_tcp $greyports_tcp and greyports_udp $greyports_udp
+	| Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show the debug information
+	└────────────────────────────────────────────────────────────────${reset}"
 
 echo "# $now
 sleep $time
@@ -1218,9 +1281,9 @@ iptables -I P2PARTISAN-DROP-OUT 1 -s $1 -j LOG --log-prefix \"P2Partisan-DEBUG-O
 chmod 777 ./iptables-debug  > /dev/null 2>&1
 plog "Debug started for IP $1 for $minutes minute"
 ./iptables-debug 1>/dev/null &
-				echo -e "| Enabled full debug logging for LAN IP \033[1;32m$1\033[0;40m for \033[1;32m$minutes\033[0;40m minutes
-| Use \033[1;33m./p2partisan.sh debug-display\033[0;40m to show the debug information
-+---------------------------------------------------------------+"
+				echo -e "│ Enabled full debug logging for LAN IP ${f_light_green}$1${b_black} for ${f_light_green}$minutes${b_black} minutes
+│ Use ${f_light_yellow}./p2partisan.sh debug-display${b_black} to show the debug information
+└────────────────────────────────────────────────────────────────${reset}"
 
 echo "# $now
 sleep $time
@@ -1233,19 +1296,18 @@ fi
 
 pdebugdisplay() {
 echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
+┌───────────────────────── P2Partisan ──────────────────────────┐
 _____         __                          __ __               __
 |     \.-----.|  |--.--.--.-----.______.--|  |__|.-----.-----.|  |.---.-.--.--.
 |  --  |  -__||  _  |  |  |  _  |______|  _  |  ||__ --|  _  ||  ||  _  |  |  |
 |_____/|_____||_____|_____|___  |      |_____|__||_____|   __||__||___._|___  |
                           |_____|                      |__|             |_____|
 
-+---------------------------------------------------------------+
-| p2partisan.sh debug-display               Displays in & outbound debug logs
-| p2partisan.sh debug-display in            Displays inbound debug logs only
-| p2partisan.sh debug-display out           Displays outbound debug logs only
-+-------------------------- Drop Logs --------------------------+"
-
+├───────────────────────────────────────────────────────────────┤
+│ p2partisan.sh debug-display               Displays in & outbound debug logs
+│ p2partisan.sh debug-display in            Displays inbound debug logs only
+│ p2partisan.sh debug-display out           Displays outbound debug logs only
+└────────────────────────── Drop Logs ───────────────────────────"
 dfrom=$(head -1 ./iptables-debug 2> /dev/null | awk '{print $2}')
 druntime=$(( now - dfrom ))
 druntime=$(format_time "$druntime")
@@ -1262,67 +1324,67 @@ cat ./debug.log | sed '1!G;h;$!d' |
 (
 while read line
 do
-	testo=$(echo "$line" | grep "Debug started for IP" | wc -l)
-if [ "$testo" -ge 1 ]; then
-	echo "$line" >> ./debug.rev
-	cat ./debug.rev | sed '1!G;h;$!d' > ./debug.log
-	rm ./debug.rev  > /dev/null 2>&1
-	exit
-else
-	echo $line >> ./debug.rev
-fi
+	echo "$line" | grep -q "Debug started for IP" && {
+		echo "$line" >> ./debug.rev
+		cat ./debug.rev | sed '1!G;h;$!d' > ./debug.log
+		rm ./debug.rev  > /dev/null 2>&1
+		exit
+	} || {
+		echo $line >> ./debug.rev
+	}
 done
 )
 
 if [ -z $1 ]; then
-	echo -e "\033[48;5;89m+----------------------- INPUT & OUTPUT ------------------------+\033[40m"
+
+	echo -e "${b_banner_bg}├─────────────────────── INPUT & OUTPUT ─────────────────────────${b_black}"
 	head -1 ./debug.log
 	cat ./debug.log | grep "DEBUG-" | awk '{printf "%s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}' | sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g' | while read line; do
 		[ $(($c%2)) -eq 1 ] && printf "${b_grey}"
-		printf "%s\033[0m\n" "$line"
+		printf "%s${reset}\n" "$line"
 		c=$(($c+1))
 	done
-	fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+	fc=$(get_debug_status)
 	if [ "$fc" -ge 1 ]; then
 		echo -e "${f_light_yellow}NOTE: debugging is active for $druntime /$zzztime min ($leftime left). Run this command again to update the report${reset}"
 	fi
-	echo -e "\033[48;5;89m+----------------------- INPUT & OUTPUT ------------------------+\033[40m"
+	echo -e "${b_banner_bg}├─────────────────────── INPUT & OUTPUT ─────────────────────────${b_black}"
 elif [ "$1" = "in" ]; then
-	echo -e "\033[48;5;89m+--------------------------- INPUT -----------------------------+\033[40m"
+	echo -e "${b_banner_bg}├─────────────────────────── INPUT ──────────────────────────────${b_black}"
 	head -1 ./debug.log
 	cat ./debug.log | grep "DEBUG-IN" | awk '{printf "%s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}' | sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g' | while read line; do
 		[ $(($c%2)) -eq 1 ] && printf "${b_grey}"
-		printf "%s\033[0m\n" "$line"
+		printf "%s${reset}\n" "$line"
 		c=$(($c+1))
 	done
-	fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+	fc=$(get_debug_status)
 	if [ "$fc" -ge 1 ]; then
 		echo -e "${f_light_yellow}NOTE: debugging is active for $druntime /$zzztime min ($leftime left). Run this command again to update the report${reset}"
 	fi
-	echo -e "\033[48;5;89m+--------------------------- INPUT -----------------------------+\033[40m"
+	echo -e "${b_banner_bg}├─────────────────────────── INPUT ──────────────────────────────${b_black}"
+
 elif [ "$1" = "out" ]; then
-	echo -e "\033[48;5;89m+--------------------------- OUTPUT ----------------------------+\033[40m"
+	echo -e "${b_banner_bg}├─────────────────────────── OUTPUT ─────────────────────────────${b_black}"
 	head -1 ./debug.log
 	cat ./debug.log | grep "DEBUG-OUT" | awk '{printf "%s %s %s ",$1,$2,$3;for (i=4;i<=NF;i++) if ($i~/(IN|OUT|SRC|DST|PROTO|SPT|DPT)=/) printf "%s ",$i;print ""}' | sed -e 's/PROTO=//g' -e 's/IN=/I=/g' -e 's/OUT=/O=/g' -e 's/SPT=/S=/g' -e 's/DPT=/D=/g' -e 's/SRC=/S=/g' -e 's/DST=/D=/g' | while read line; do
 		[ $(($c%2)) -eq 1 ] && printf "${b_grey}"
-		printf "%s\033[0m\n" "$line"
+		printf "%s${reset}\n" "$line"
 		c=$(($c+1))
 	done
-	fc=$(iptables -L P2PARTISAN-DROP-IN | grep DEBUG | wc -l)
+	fc=$(get_debug_status)
 	if [ "$fc" -ge 1 ]; then
 		echo -e "${f_light_yellow}NOTE: debugging is active for $druntime /$zzztime min ($leftime left). Run this command again to update the report${reset}"
 	fi
-	echo -e "\033[48;5;89m+--------------------------- OUTPUT ----------------------------+\033[40m"
+	echo -e "${b_banner_bg}├─────────────────────────── OUTPUT ─────────────────────────────${b_black}"
 fi
-echo -e "+---------------------------------------------------------------+\033[0;39m"
+echo -e "└────────────────────────────────────────────────────────────────${reset}"
 }
 
 pwhitelist() {
-		ipset -F whitelist
-
-		# VPN - Tinc hosts are IP whitelisted
-	if [ "$(nvram get tinc_wanup)" -eq 1 ]; then
-	for IP in $(nvram get tinc_hosts | grep -Eo '\w*[a-z]\w*(\.\w*[a-z]\w*)+'); do
+	ipset -F whitelist
+	# VPN - Tinc hosts are IP whitelisted
+	if [ "$(NG tinc_wanup)" -eq 1 ]; then
+	for IP in $(NG tinc_hosts | grep -Eo '\w*[a-z]\w*(\.\w*[a-z]\w*)+'); do
 		echo "$IP" | grep -E "(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])" >/dev/null 2>&1 && nslookup $IP | grep "Address [0-9]*:" | grep -v 127.0.0.1 | grep -v "\:\:" | grep -Eo "([0-9\.]{7,15})" | {
 			while read IPO
 			do
@@ -1340,21 +1402,20 @@ pwhitelist() {
 }
 
 pgreylist() {
-		ipset -F greylist
+	ipset -F greylist
 	[ -f ./greylist ] && cat ./greylist | grep -Ev "^#|^$" | tr -d "\r" | while read IP; do
 		add_ip_to_set "$IP" "greylist"
 	done
 }
 
 pblacklistcustom() {
-		ipset -F blacklist-custom
+	ipset -F blacklist-custom
 	[ -f ./blacklist-custom ] && cat ./blacklist-custom | grep -Ev "^#|^$" | tr -d "\r" | while read IP; do
 		add_ip_to_set "$IP" "blacklist-custom"
 	done
 }
 
 pstart() {
-
 running4=$([ -f "$pidfile" ] && echo 1 || echo 0)
 if [ $running4 -eq "0" ] ; then
 	[ -f /tmp/p2partisan.loading ] && echo "P2Partisan is still loading. Exiting..." && exit
@@ -1365,15 +1426,15 @@ if [ $running4 -eq "0" ] ; then
 	[ -e iptables-del ] && rm iptables-del
 	[ -e ipset-del ] && rm ipset-del
 	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                 _______ __               __
-|                |     __|  |_.---.-.----.|  |_
-|                |__     |   _|  _  |   _||   _|
-|                |_______|____|___._|__|  |____|
-|
-+---------------------------------------------------------------+
-+--------- PREPARATION --------"
-echo "| Loading the ipset modules"
+┌───────────────────────── P2Partisan ──────────────────────────┐
+│                 _______ __               __
+│                |     __|  |_.---.-.----.|  |_
+│                |__     |   _|  _  |   _||   _|
+│                |_______|____|___._|__|  |____|
+│
+├───────────────────────────────────────────────────────────────┤
+├───────── PREPARATION ────────"
+echo "│ Loading the ipset modules"
 {
 	lsmod | awk '{print $1}' | grep -we "^ip_set" || insmod ip_set
 	lsmod | awk '{print $1}' | grep -we "^xt_set" || insmod xt_set
@@ -1383,8 +1444,8 @@ counter=0
 pos=1
 counter=$(printf "%02d" $counter)
 echo "+---- CUSTOM IP BLACKLIST -----
-| preparing blacklist-custom ..."
-echo -e "| Loading Blacklist_$counter data ---> \033[1;37m***Custom IP blacklist***\033[0;40m"
+│ preparing blacklist-custom ..."
+echo -e "│ Loading Blacklist_$counter data ---> \033[1;37m***Custom IP blacklist***\033[0;40m"
 if [ "$(ipset --swap blacklist-custom blacklist-custom 2>&1 | grep 'does not exist')" != "" ]
 	then
 	ipset --create blacklist-custom hash:net hashsize 1024 --resize 5 maxelem 1024000  2> /dev/null
@@ -1393,27 +1454,27 @@ pblacklistcustom
 
 [ -e /tmp/iptables-add.tmp ] && rm /tmp/iptables-add.tmp > /dev/null 2>&1
 
-echo "+--------- GREYPORTs ----------"
+echo "├───────── GREYPORTs ──────────"
 echo $greyports_tcp | format_ports | while read w; do
-echo -e "| Loading grey TCP ports:  \033[1;37m$w\033[0;40m"
+echo -e "│ Loading grey TCP ports:  \033[1;37m$w\033[0;40m"
 echo "iptables -A P2PARTISAN-IN -i $wanif -p tcp --match multiport --dports $w -g P2PARTISAN-LISTS-IN
 iptables -A P2PARTISAN-OUT -o $wanif -p tcp --match multiport --sports $w -g P2PARTISAN-LISTS-OUT" >> /tmp/iptables-add.tmp
 done
 echo $greyports_udp | format_ports | while read w; do
-echo -e "| Loading grey UDP ports:  \033[1;37m$w\033[0;40m"
+echo -e "│ Loading grey UDP ports:  \033[1;37m$w\033[0;40m"
 echo "iptables -A P2PARTISAN-IN -i $wanif -p udp --match multiport --dports $w -g P2PARTISAN-LISTS-IN
 iptables -A P2PARTISAN-OUT -o $wanif -p udp --match multiport --sports $w -g P2PARTISAN-LISTS-OUT" >> /tmp/iptables-add.tmp
 done
 # Get transmission port for greylisting if enabled
-transmissionenable=$(nvram get bt_enable)
-transmissionport=$(nvram get bt_port 2> /dev/null)  # Cache this value
-wanip=$(nvram get wan_ipaddr)  # Cache this value
+transmissionenable=$(NG bt_enable)
+transmissionport=$(NG bt_port 2> /dev/null)  # Cache this value
+wanip=$(NG wan_ipaddr)  # Cache this value
 if [ -z $transmissionenable ]; then
-	echo "|  TransmissionBT:  Not available"
+	echo "│  TransmissionBT:  Not available"
 	elif [ $transmissionenable -eq 0 ]; then
-	echo "|  TransmissionBT:  Off"
+	echo "│  TransmissionBT:  Off"
 	else
-	echo -e "|  TransmissionBT:  \033[1;32mOn\033[0;40m"
+	echo -e "│  TransmissionBT:  \033[1;32mOn\033[0;40m"
 	p3=$(echo "$greyports_tcp" | grep -Eo "$transmissionport" | wc -l)
 	p4=$(echo "$greyports_udp" | grep -Eo "$transmissionport" | wc -l)
 	if [ $p3 -eq "0" ]; then
@@ -1427,16 +1488,16 @@ iptables -A P2PARTISAN-OUT -o $wanif -p udp -s $wanip --sport $transmissionport 
 iptables -A P2PARTISAN-OUT -o $wanif -p udp -s $wanip --sport 49152:65535 -g P2PARTISAN-LISTS-OUT" >> /tmp/iptables-add.tmp
 	fi
 fi
-echo "+--------- WHITEPORTs ---------"
+echo "├───────── WHITEPORTs ─────────"
 echo $whiteports_tcp | format_ports | while read w; do
-echo -e "| Loading white TCP ports \033[1;37m$w\033[0;40m"
+echo -e "│ Loading white TCP ports \033[1;37m$w\033[0;40m"
 echo "iptables -A P2PARTISAN-IN -i $wanif -p tcp --match multiport --sports $w -j RETURN
 iptables -A P2PARTISAN-IN -i $wanif -p tcp --match multiport --dports $w -j RETURN
 iptables -A P2PARTISAN-OUT -o $wanif -p tcp --match multiport --sports $w -j RETURN
 iptables -A P2PARTISAN-OUT -o $wanif -p tcp --match multiport --dports $w -j RETURN" >> /tmp/iptables-add.tmp
 done
 echo $whiteports_udp | format_ports | while read w; do
-echo -e "| Loading white UDP ports \033[1;37m$w\033[0;40m"
+echo -e "│ Loading white UDP ports \033[1;37m$w\033[0;40m"
 echo "iptables -A P2PARTISAN-IN -i $wanif -p udp --match multiport --sports $w -j RETURN
 iptables -A P2PARTISAN-IN -i $wanif -p udp --match multiport --dports $w -j RETURN
 iptables -A P2PARTISAN-OUT -o $wanif -p udp --match multiport --sports $w -j RETURN
@@ -1490,23 +1551,23 @@ iptables -X P2PARTISAN-LISTS-OUT
 iptables -X P2PARTISAN-DROP-IN
 iptables -X P2PARTISAN-DROP-OUT" >> iptables-del
 
-echo "+--------- GREY IPs ---------"
-echo "| preparing IP greylist ..."
+echo "├───────── GREY IPs ─────────"
+echo "│ preparing IP greylist ..."
 #Load the whitelist
 	if [ "$(ipset --swap greylist greylist 2>&1 | grep 'does not exist')" != "" ]
 		then
 			ipset --create greylist hash:net hashsize 16 --resize 5 maxelem 255  > /dev/null 2>&1
 		fi
 	pgreylist
-	echo -e "| Loading IP greylist data ---> \033[1;37m***IP greylist***\033[0;40m"
+	echo -e "│ Loading IP greylist data ---> \033[1;37m***IP greylist***\033[0;40m"
 	echo "iptables -A P2PARTISAN-IN -m set  --match-set greylist src -g P2PARTISAN-LISTS-IN
 iptables -A P2PARTISAN-IN -m set  --match-set greylist dst -g P2PARTISAN-LISTS-IN
 iptables -A P2PARTISAN-OUT -m set  --match-set greylist src -g P2PARTISAN-LISTS-OUT
 iptables -A P2PARTISAN-OUT -m set  --match-set greylist dst -g P2PARTISAN-LISTS-OUT" >> iptables-add
 
 
-echo "+--------- WHITE IPs ---------"
-echo "| preparing IP whitelist ..."
+echo "├───────── WHITE IPs ─────────"
+echo "│ preparing IP whitelist ..."
 #Load the whitelist
 if [ "$(ipset --swap whitelist whitelist 2>&1 | grep 'does not exist')" != "" ]
 	then
@@ -1518,7 +1579,7 @@ ipset -F
 ipset -X blacklist-custom
 ipset -X greylist
 ipset -X whitelist" > ipset-del
-echo -e "| Loading IP whitelist data ---> ${f_light_white}***IP Whitelist***${reset}"
+echo -e "│ Loading IP whitelist data ---> ${f_light_white}***IP Whitelist***${reset}"
 echo "iptables -A P2PARTISAN-IN -m set  --match-set whitelist src -j RETURN
 iptables -A P2PARTISAN-IN -m set  --match-set whitelist dst -j RETURN
 iptables -A P2PARTISAN-OUT -m set  --match-set whitelist src -j RETURN
@@ -1535,7 +1596,7 @@ echo "iptables -A P2PARTISAN-DROP-IN -j DROP
 iptables -A P2PARTISAN-DROP-OUT -j REJECT --reject-with icmp-admin-prohibited"  >> iptables-add
 
 
-echo "+------- IP BLACKLISTs -------"
+echo "├───────── IP BLACKLISTs ────────"
 cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | (
 	while read line
 	do
@@ -1551,7 +1612,7 @@ cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | (
 			then
 				[ -f ./$name.cidr ] && cat ./$name.cidr | cut -d" " -f3 | grep -F "$adminip" > /dev/null && complete=1 || complete=0
 				if [ $complete -eq 1 ]; then				#.cidr exists and populated, using it
-					echo -e "| Async loading [\033[1;32m Cached \033[0;40m] Blacklist_$counter --> \033[1;37m***$name***\033[0;40m"
+					echo -e "│ Async loading [\033[1;32m Cached \033[0;40m] Blacklist_$counter --> \033[1;37m***$name***\033[0;40m"
 					{
 					ipset -F $name
 					ipset -X $name
@@ -1569,7 +1630,7 @@ cat blacklists | grep -Ev "^#|^$" | tr -d "\r" | (
 				else
 					listtype=5
 				fi
-				echo -e "| Async loading [\033[1;35mComputed\033[0;40m] Blacklist_$counter --> \033[1;37m***$name***\033[0;40m"
+				echo -e "│ Async loading [\033[1;35mComputed\033[0;40m] Blacklist_$counter --> \033[1;37m***$name***\033[0;40m"
 					{
 					ipset -F $name
 					ipset -X $name
@@ -1622,46 +1683,40 @@ chmod 777 ./ipset-*
 ./iptables-add 2> /dev/null  #protecting
 
 plog "... P2Partisan started"
-echo "+------------------------- Controls ----------------------------+"
-
-p=$(nvram get dnsmasq_custom | grep log-async | wc -l)
-if [ $p -eq "1" ]; then
+echo "├───────────────────────── Controls ─────────────────────────────"
+NG dnsmasq_custom | grep -q log-async && {
 	plog "log-async found under dnsmasq -> OK"
-	echo "+---------------------------------------------------------------+"
-else
+	echo "└────────────────────────────────────────────────────────────────"
+} || {
 	plog "
-| It appears like you don't have a log-async parameter in your dnsmasq
-| config. This is strongly suggested due to the amount of logs involved,
-| especially while debugging to consider adding the following command
-| under Advanced/DHCP/DNS/Dnsmasq Custom configuration:
-|
-| log-async=20
-|
-+---------------------------------------------------------------+\033[0;39m"
-fi
-p=$(nvram get script_fire | grep "cru a P2Partisan-tutor" | wc -l)
-if [ $p -eq "0" ] ; then
-	ptutorset
-fi
+│ It appears like you don't have a log-async parameter in your dnsmasq
+│ config. This is strongly suggested due to the amount of logs involved,
+│ especially while debugging to consider adding the following command
+│ under Advanced/DHCP/DNS/Dnsmasq Custom configuration:
+│
+│ log-async=20
+│
+└────────────────────────────────────────────────────────────────${reset}"
+}
+NG script_fire | grep -q "cru a P2Partisan-tutor" || ptutorset
+
 
 post=$(date +%s)
 [ -f /tmp/p2partisan.loading ] && rm -r "/tmp/p2partisan.loading" >/dev/null 2>&1
 	else
-	echo -e "\033[0;40m
-+------------------------- P2Partisan --------------------------+
-|                 _______ __               __
-|                |     __|  |_.---.-.----.|  |_
-|                |__     |   _|  _  |   _||   _|
-|        already |_______|____|___._|__|  |____| ed
-|
-+---------------------------------------------------------------+
-| It appears like P2Partisan is already running. Skipping...
-|
-| Is this is not what you expected? Try:
-| \033[1;33m./p2partisan.sh update\033[0;40m
-+---------------------------------------------------------------+
-				\033[0;39m"
-		fi
+	echo -e "${b_black}\n┌───────────────────────── P2Partisan ──────────────────────────┐
+│                 _______ __               __
+│                |     __|  |_.---.-.----.|  |_
+│                |__     |   _|  _  |   _||   _|
+│        already |_______|____|___._|__|  |____| ed
+│
+├───────────────────────────────────────────────────────────────┤
+│ It appears like P2Partisan is already running. Skipping...
+│
+│ Is this is not what you expected? Try:
+│ ${f_light_yellow}./p2partisan.sh update${b_black}
+└────────────────────────────────────────────────────────────────${reset}"
+	fi
 }
 
 b64(){
@@ -1673,15 +1728,15 @@ for(b=0;b<6;b++){o=o*2+int(c/32);c=(c*2)%64;if(++obc==8){if(o)
 pdeaggregate() {
 awk '
 function ip2int(ip) {
- for (ret=0,n=split(ip,a,"\."),x=1;x<=n;x++) ret=or(lshift(ret,8),a[x])
- return ret
+	for (ret=0,n=split(ip,a,"\."),x=1;x<=n;x++) ret=or(lshift(ret,8),a[x])
+	return ret
 }
 
 function int2ip(ip,ret,x) {
- ret=and(ip,255)
- ip=rshift(ip,8)
- for(;x<3;ret=and(ip,255)"."ret,ip=rshift(ip,8),x++);
- return ret
+	ret=and(ip,255)
+	ip=rshift(ip,8)
+	for(;x<3;ret=and(ip,255)"."ret,ip=rshift(ip,8),x++);
+	return ret
 }
 
 BEGIN {
@@ -1690,21 +1745,20 @@ FS="[-]"
 }
 
 {
- base=ip2int($1)
- end=ip2int($2)
- while (base <= end) {
- step = 0
- while ( or(base, lshift(1, step)) != base) {
- if ( or(base, rshift((bits, (31-step)))) > end ) {
- break;
- }
- step++
- }
- print int2ip(base)"/"(32-step)
- base = base + lshift(1, step)
- }
+	base=ip2int($1)
+	end=ip2int($2)
+	while (base <= end) {
+	step = 0
+	while ( or(base, lshift(1, step)) != base) {
+	if ( or(base, rshift((bits, (31-step)))) > end ) {
+	break;
+	}
+	step++
+	}
+	print int2ip(base)"/"(32-step)
+	base = base + lshift(1, step)
+	}
 }
-
 '  #end of awk script
 }
 
@@ -1748,7 +1802,7 @@ case "$p" in
 				;;
 		"update")
 				pforcestop $2
-						echo "| Now updating..."
+						echo "│ Now updating..."
 						;;
 		"autorun-on")
 						pautorunset
